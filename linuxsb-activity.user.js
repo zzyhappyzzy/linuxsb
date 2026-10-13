@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         LINUX SB 我的活跃度
 // @namespace    local.linuxsb.activity
-// @version      1.0.0
+// @version      1.0.1
 // @description  突出活跃度和账号状态，按低分项目给出提升建议
 // @match        https://linux.sb/*
 // @run-at       document-idle
@@ -316,7 +316,8 @@
         const tail = text.slice(total.index + total[0].length);
         // Read the adjacent official status; never infer a tier from a numeric score.
         const adjacent = /^\s*(?:当前状态\s*[:：]?\s*)?([\u4e00-\u9fff]{2,8}?)(?=\s|已|$)/.exec(tail)?.[1] || '';
-        const state = /^(已|根据|最近|得分|注册|有效|参与|签到|精华|社区|具体)/.test(adjacent) ? '' : adjacent;
+        // Exclude metric labels without discarding the legitimate tier “参与者”.
+        const state = /^(已|根据|最近|得分|注册|有效|参与主题|参与版块|参与红包|签到|精华|社区|具体)/.test(adjacent) ? '' : adjacent;
         const period = /最近\s*(\d+)\s*天/.exec(text);
         const names = METRICS.map(metric => metric.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
         const guide = readGuide(main);
