@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         LINUX SB 我的活跃度
 // @namespace    local.linuxsb.activity
-// @version      1.0.1
-// @description  突出活跃度和账号状态，按低分项目给出提升建议
+// @version      1.1.2
+// @description  突出活跃度和账号状态，按低分项目给出提升建议；自动点击侧栏带红点的抽奖入口（不跳转）
 // @match        https://linux.sb/*
 // @run-at       document-idle
 // @grant        none
@@ -17,7 +17,7 @@
     const PREFERENCE_KEY = 'linuxsb-activity-helper-expanded';
     // Names follow the official page. Score caps always come from the response.
     const METRICS = [
-        { name: '参与红包', label: '参与红包' },
+        { name: '讨论红包', label: '讨论红包' },
         { name: '精华/热议', label: '精华 / 热议' },
         { name: '参与主题', label: '参与主题' },
         { name: '参与版块', label: '参与版块' },
@@ -317,7 +317,7 @@
         // Read the adjacent official status; never infer a tier from a numeric score.
         const adjacent = /^\s*(?:当前状态\s*[:：]?\s*)?([\u4e00-\u9fff]{2,8}?)(?=\s|已|$)/.exec(tail)?.[1] || '';
         // Exclude metric labels without discarding the legitimate tier “参与者”.
-        const state = /^(已|根据|最近|得分|注册|有效|参与主题|参与版块|参与红包|签到|精华|社区|具体)/.test(adjacent) ? '' : adjacent;
+        const state = /^(已|根据|最近|得分|注册|有效|参与主题|参与版块|讨论红包|签到|精华|社区|具体)/.test(adjacent) ? '' : adjacent;
         const period = /最近\s*(\d+)\s*天/.exec(text);
         const names = METRICS.map(metric => metric.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
         const guide = readGuide(main);
@@ -548,4 +548,62 @@
     setExpanded(expanded, false);
     // Fetch on every page load, including when the saved preference is collapsed.
     void load();
+
+    // ---- Auto-click sidebar promo links that carry a red dot (click only, never navigate) ----
+    // Any <a> that contains the dot counts; there can be several, and the container may vary.
+    const PROMO_DOT = '.sidebar-promotions-lottery-dot';
+    const PROMO_COOLDOWN = 5 * 60 * 1000; // Don't re-click the same link more often than this.
+    const PROMO_GAP = 800;                // Pause between clicks when several dots are present.
+    const promoClickedAt = new Map();
+    let promoTimer = 0;
+    let promoRunning = false;
+    let promoDirty = false;
+
+    const promoKey = link => `${link.dataset.promotionId || ''}|${link.href}`;
+    // The dot is an empty decorative span, so judge visibility by its style and the link's box.
+    const promoVisible = (link, dot) => {
+        if (!link.getClientRects().length) return false;
+        const style = getComputedStyle(dot);
+        return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+    };
+
+    // Dispatch a synthetic click so the site's own handlers run, but cancel the default
+    // action (navigation / new tab). The capture listener lives only for this one dispatch.
+    function clickWithoutNavigate(link) {
+        const block = event => { if (link === event.target || link.contains(event.target)) event.preventDefault(); };
+        window.addEventListener('click', block, true);
+        try {
+            link.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+        } finally {
+            window.removeEventListener('click', block, true);
+        }
+    }
+
+    async function scanPromoDots() {
+        if (promoRunning) { promoDirty = true; return; }
+        promoRunning = true;
+        try {
+            const links = new Set();
+            document.querySelectorAll(PROMO_DOT).forEach(dot => {
+                const link = dot.closest('a');
+                if (link && promoVisible(link, dot)) links.add(link);
+            });
+            for (const link of links) {
+                const key = promoKey(link);
+                if (!link.isConnected || Date.now() - (promoClickedAt.get(key) || 0) < PROMO_COOLDOWN) continue;
+                promoClickedAt.set(key, Date.now());
+                clickWithoutNavigate(link);
+                await new Promise(resolve => setTimeout(resolve, PROMO_GAP));
+            }
+        } finally {
+            promoRunning = false;
+            if (promoDirty) { promoDirty = false; schedulePromoScan(); }
+        }
+    }
+    function schedulePromoScan() { clearTimeout(promoTimer); promoTimer = setTimeout(scanPromoDots, 500); }
+    // The sidebar may render late or re-render, so watch for DOM changes instead of scanning once.
+    new MutationObserver(schedulePromoScan).observe(document.documentElement, {
+        childList: true, subtree: true, attributes: true, attributeFilter: ['class', 'style', 'hidden'],
+    });
+    schedulePromoScan();
 })();
